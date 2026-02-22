@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import lombok.Data;
 
+import java.time.ZonedDateTime;
 import java.util.List;
 
 @Data
@@ -17,6 +18,12 @@ public class TriggerGroup {
 
     @Column(name = "job_duration")
     private int maxJobDurationInSec;
+
+    private String name;
+
+    private ZonedDateTime createdAt;
+
+    private ZonedDateTime updatedAt;
 
     @OneToMany
     private List<Trigger> triggers;
