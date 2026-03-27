@@ -1,0 +1,109 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+AddRelTag("async", $textColor="black", $lineColor="black", $lineStyle = DashedLine())
+AddRelTag("sync", $textColor="black", $lineColor="black", $lineStyle = SolidLine())
+
+LAYOUT_WITH_LEGEND()
+
+title Агрегатор рыночных курсов v2.0.\nМодуль Расчётных котировок.\nКомпонентная диаграмма
+
+System_Boundary(as_acp, "АС Агрегатор Рыночных Курсов v2.0") {
+    ContainerQueue(topic_acp_base_quotes_avro, "ACP.BASE_QUOTES.AVRO", "Базовые котировки")
+    Container(сontainer_acp_volga_calculation_quote, "ACP-Volga-Calculation-Quote", "Java 21, Spring Boot", "Обработка потока базовых котировок") {
+        ' Уровень консьюмеров и контроллеров
+        Component(quoteConsumer, "BaseQuoteKafkaConsumerHandler", "Чтение базовых котировок из топика")
+
+        ' Уровень продюсеров
+        Component(quoteProducer, "CalculatedQuoteKafkaMessageProducer", "Kafka-продюсер расчётных котировок")
+        
+        ' Шедулеры, задачи
+        Component(acpCalculationQuoteSettingCacheSynchronizer, "AcpCalculationQuoteSettingCacheSynchronizer", "Синхронизирует локальные кеши данными, получаемыми от сервиса расчётных настроек")
+
+        ' Уровень композитных сервисов
+        Component(calculationQuoteProcessingCompositeService, "CalculatedQuoteProcessingCompositeService", "Определяет последовательность действий обработки базовой котировки, формирование расчётной котировки и её тиражирование")
+
+        ' Уровень доменных-сервисов
+        Component(priceCalculatorService, "PriceCalculator", "Формирует цены расчётной котировки")
+        Component(lastCalculatedQuoteService, "LastCalculatedQuoteService", "Управляет доменом последних расчётных котировок")
+        Component(lastBaseQuoteService, "LastBaseQuoteService", "Управляет доменом последних базовых котировок")
+        Component(calculatedQuoteService, "CalculatedQuoteService", "Управляет доменом расчётных котировок")
+        Component(calculatedQuoteSettingService, "CalculatedQuoteSettingService", "Оперирует настройками расчётных котировок")
+        Component(triggerGroupService, "TriggerGroupService", "Знает о всех группах и может инициировать запуск задачи")
+        Component(triggerGroupJobService, "TriggerGroupJobService", "Управляет жизненным циклом задач запуска триггеров в группе")
+        Component(triggerJobService, "TriggerJobService", "Сервис над доменом задач групп триггеров")
+        Component(priceDeviationService, "PriceDeviationService", "Сервис проверки корректности сформированных расчётных котировок")
+        Component(quotePublishService, "QuotePublishService", "Сервис формирует сообщения и делегирует отправку данных клиенту")
+
+	    ' Workflows
+	    Component(manualQuoteProcessingWorkflow, ManualQuoteProcessingWorkflow, "Флоу обработки котировок, заданных пользователем")
+	    Component(streamQuoteProcessingWorkflow, StreamQuoteProcessingWorkflow, "Флоу обработки котировок, поставляемых системами-источниками")
+	    Component(triggerQuoteProcessingWorkflow, TriggerQuoteProcessingWorkflow, "Флоу обработки котировок триггерами")
+
+        ' REST-клиенты
+        Component(calculatedQuoteSettingRestClient, "CalculatedQuoteSettingRestClient", "Клиента для получения настроек расчётных котировок")
+        Component(baseQuotesRestClient, "BaseQuotesRestClient", "Клиента для получения последних базовых котировок")
+
+        ' Уровень репозиториев/DAO
+        Component(lastCalculatedQuoteRepository, "LastCalculatedQuoteRepository", "CRUD для последних расчётных котировок")
+        Component(triggerJobRepository, "TriggerJobRepository", "CRUD для задач по запуску триггеров")
+
+        ' Уровень локальных кешей
+        Component(calculatedQuoteSettingCache, "CalculatedQuoteSettingCache", "Локальный кеш настроек расчётных котировок")
+        Component(triggerGroupCache, "TriggerGroupCache", "Локальный кеш групп триггеров")
+        Component(baseQuoteCache, "BaseQuoteCache", "Локальный кеш базовых котировок")
+
+    }
+    Container(svc_acp_volga_calculation_quote_settings, "Настройки расчётных котировок", "API домена расчётных котировок")
+    Container(svc_erg_base_quotes, "Входящие и базовые котировки", "API домена базовых котировок")
+    ContainerDb(db_pangolin, "Расчётные котировки", "Pangolin", "Расчётные котировки и триггеры")
+    ContainerQueue(topic_acp_calculated_quotes_avro, "ACP.CALCULATED_QUOTES.AVRO", "Расчётные котировки")
+}
+
+Rel(topic_acp_base_quotes_avro, quoteConsumer, "Чтение базовых котировок из топика", $tags="async")
+Rel(quoteConsumer, calculationQuoteProcessingCompositeService, "Обработка прочитанной базовой котировки", $tags="sync")
+Rel(quoteProducer, topic_acp_calculated_quotes_avro, "Отправка расчётных котировок на тиражирование", $tags="async")
+
+Rel(acpCalculationQuoteSettingCacheSynchronizer, calculatedQuoteSettingService, "Асинхронное получение доменных объектов сервиса настроек расчётных котировок", $tags = "async")
+Rel(acpCalculationQuoteSettingCacheSynchronizer, triggerGroupService, "Получение и хранение локально настроек расчётных котировок", $tags = "async")
+
+Rel(calculationQuoteProcessingCompositeService, triggerQuoteProcessingWorkflow, "Обработка котировок после обработки триггерами", $tags="sync")
+Rel(calculationQuoteProcessingCompositeService, manualQuoteProcessingWorkflow, "Обработка котировок введённых пользователем", $tags="sync")
+Rel(calculationQuoteProcessingCompositeService, streamQuoteProcessingWorkflow, "Обработка котировок от источника котировок", $tags="sync")
+Rel(calculationQuoteProcessingCompositeService, triggerGroupService, "Обработка котировок от источника котировок", $tags="sync")
+Rel(calculationQuoteProcessingCompositeService, lastBaseQuoteService, "Получить последние базовые котировки", $tags="sync")
+Rel(calculationQuoteProcessingCompositeService, calculatedQuoteSettingService, "Получить настройки расчётных котировок", $tags="sync")
+
+Rel(manualQuoteProcessingWorkflow, quotePublishService, "Сформировать сообщения и отправить через клиент потребителю", $tags="sync")
+Rel(manualQuoteProcessingWorkflow, calculatedQuoteService, "Сформировать расчётные котировки с ценами", $tags="sync")
+Rel(manualQuoteProcessingWorkflow, priceDeviationService, "Проверить расчётные котировки на рыночность", $tags="sync")
+
+Rel(streamQuoteProcessingWorkflow, quotePublishService, "Сформировать сообщения и отправить через клиент потребителю", $tags="sync")
+Rel(streamQuoteProcessingWorkflow, calculatedQuoteService, "Сформировать расчётные котировки с ценами", $tags="sync")
+Rel(streamQuoteProcessingWorkflow, priceDeviationService, "Проверить расчётные котировки на рыночность", $tags="sync")
+
+
+Rel(triggerQuoteProcessingWorkflow, quotePublishService, "Сформировать сообщения и отправить через клиент потребителю", $tags="sync")
+Rel(triggerQuoteProcessingWorkflow, calculatedQuoteService, "Сформировать расчётные котировки с ценами", $tags="sync")
+Rel(triggerQuoteProcessingWorkflow, triggerGroupJobService, "Сформировать расчётные котировки с ценами", $tags="sync")
+Rel(triggerQuoteProcessingWorkflow, priceDeviationService, "Проверить расчётные котировки на рыночность", $tags="sync")
+
+Rel(priceDeviationService, lastCalculatedQuoteService, "Работа с последними расчётными котировками", $tags="sync")
+Rel(quotePublishService, quoteProducer, "Сформировать сообщения и отправить через клиент потребителю", $tags="sync")
+
+Rel(lastCalculatedQuoteService, lastCalculatedQuoteRepository, "CRUD операции с последними расчётными котировками", $tags="sync")
+Rel(lastBaseQuoteService, baseQuotesRestClient, "Получение последних базовых котировок", $tags="sync")
+Rel(calculatedQuoteService, priceCalculatorService, "Формирует цены расчётной котировки", $tags="sync")
+Rel(calculatedQuoteSettingService, calculatedQuoteSettingCache, "Получение и хранение локально настроек расчётных котировок", $tags="sync")
+Rel(triggerGroupService, triggerGroupCache, "Использовать данные групп триггеров", $tags="sync")
+Rel(triggerJobService, triggerJobRepository, "CRUD над доменом задач по запуску триггеров", $tags="sync")
+Rel(triggerGroupJobService, triggerJobService, "Операции над доменом задач по запуску триггеров", $tags="sync")
+Rel(triggerGroupJobService, lastBaseQuoteService, "Получить последние базовые котировки", $tags="sync")
+
+Rel(calculatedQuoteSettingRestClient, svc_acp_volga_calculation_quote_settings,"REST API запросов в ACP.Volga_Calcuation_Settings", $tags="sync")
+Rel(baseQuotesRestClient, svc_erg_base_quotes,"REST API запросов в ERG-Base-Quotes", $tags="sync")
+
+Rel(triggerJobRepository, db_pangolin, "JDBC, DML", $tags="sync")
+Rel(lastCalculatedQuoteRepository, db_pangolin, "JDBC, DML", $tags="sync")
+
+
+@enduml

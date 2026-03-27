@@ -1,0 +1,79 @@
+```
+@startuml
+title: Диаграмма последовательности обработки котировки в модуле расчётов
+autonumber
+
+queue "ACP.BASE_QUOTES.AVRO" as baseQuoteTopic
+box "Модуль расчётов" #LightBlue
+participant "BaseQuoteKafkaConsumerHandler" as quoteConsumer
+participant "CalculatedQuoteCompositeService" as calculatedQuoteCompositeService
+participant "QuotePriceChangeProcessingService" as quotePriceChangeProcessingService
+participant "TriggerGroupService" as triggerGroupService
+database "TriggerGroupCache" as triggerGroupCache
+participant "CalculatedQuoteSettingService" as calculatedQuoteSettingService
+database "CalculatedQuoteSettingCache" as calculatedQuoteSettingCache
+participant "CalculatedQuoteService" as calculatedQuoteService
+participant "PriceCalculator" as priceCalculator
+participant "CalculatedQuoteKafkaMessageProducer" as quoteProducer
+participant "LastCalculatedQuoteService" as lastCalculatedQuoteService
+participant LastCalculatedQuoteRepository as lastCalculatedQuoteRepository
+
+end box
+database "БД модуля расчётов" as db
+queue "ACP.CALCULATED_QUOTES.AVRO" as calculatedQuoteTopic
+
+== Начало обработки котировок ==
+quoteConsumer++
+    baseQuoteTopic ->> quoteConsumer: вычитываем котировку из топика
+        quoteConsumer ->> calculatedQuoteCompositeService: отправить базовую котировку на обработку\nи формирование расчётных цен
+        calculatedQuoteCompositeService++
+            calculatedQuoteCompositeService ->> calculatedQuoteSettingService: получить расчётные настройки для котировки
+                calculatedQuoteSettingService++
+                    calculatedQuoteSettingService ->> calculatedQuoteSettingCache: извлечь настройки из локального кеша
+                        calculatedQuoteSettingCache++
+                        calculatedQuoteSettingCache ->> calculatedQuoteSettingService: вернуть найденные расчётные настройки
+                        calculatedQuoteSettingCache--
+                    calculatedQuoteSettingService ->> calculatedQuoteCompositeService: расчётные настройки
+                calculatedQuoteSettingService--
+            calculatedQuoteCompositeService ->> triggerGroupService: получить группы триггеров, где есть валютная пара
+            triggerGroupService++
+                triggerGroupService ->> triggerGroupCache: получить группы по инструменту, тиру, провайдеру
+                    triggerGroupCache++
+                    triggerGroupCache ->> triggerGroupService: вернуть все найденные группы триггеров
+                    triggerGroupCache--
+                triggerGroupService ->> calculatedQuoteCompositeService: группы триггеров
+            triggerGroupService--
+            alt котировка введена руками
+                loop по всем найденным группам
+                    calculatedQuoteCompositeService ->> calculatedQuoteService: посчитать цены и сформировать котировку
+                    calculatedQuoteService++
+                        calculatedQuoteService -> calculatedQuoteCompositeService: расчётная котировка
+                    calculatedQuoteService--
+                    calculatedQuoteCompositeService ->> lastCalculatedQuoteService: сохранить новую расчётную котировку
+                    lastCalculatedQuoteService++
+                        lastCalculatedQuoteService --> lastCalculatedQuoteRepository: saveOrUpdate
+                        lastCalculatedQuoteRepository++
+                            lastCalculatedQuoteRepository ->> db: DML
+                            db++
+                                db ->> lastCalculatedQuoteRepository: COMMITED
+                            db--
+                            lastCalculatedQuoteRepository ->> lastCalculatedQuoteService: OK
+                        lastCalculatedQuoteRepository--
+                        lastCalculatedQuoteService ->> calculatedQuoteCompositeService: Расчётная котировка сформирована
+                    lastCalculatedQuoteService--
+                end
+            else котировка пришла от провайдера
+            end
+            group Блокировка тиража
+                alt Есть ранее посчитанная расчётная котировка
+                else Нет расчётной котировки
+                end
+            end
+        calculatedQuoteCompositeService ->> quoteConsumer: конец обработки
+        calculatedQuoteCompositeService--
+    quoteConsumer -->> baseQuoteTopic: sync ack
+quoteConsumer--
+
+@enduml
+
+```

@@ -1,0 +1,53 @@
+@startuml
+participant DomainService
+participant DomainRepository
+participant TransactionalOutboxTask
+participant TransactionalOutboxService
+participant TransactionalOutboxRepository
+database "Pangolin" as db
+queue "ACP.INTERNAL.EVENTS.JSON" as topicKafka
+
+== Application transaction ==
+activate DomainService
+DomainService ->> DomainRepository: save()/saveAll()/delete()/etc.
+    activate DomainRepository
+        DomainRepository ->> db: DML
+        activate db
+        db ->> DomainRepository: COMMITED
+        deactivate db
+        DomainRepository ->> DomainService: ok
+    deactivate DomainRepository
+    DomainService ->> TransactionalOutboxService
+    activate TransactionalOutboxService
+        TransactionalOutboxService ->> TransactionalOutboxRepository: save/saveAll
+        activate TransactionalOutboxRepository
+            TransactionalOutboxRepository ->> db: DML
+            activate db
+            db ->> TransactionalOutboxRepository : COMMITED
+            deactivate db
+        TransactionalOutboxRepository ->> TransactionalOutboxService: ok
+        deactivate TransactionalOutboxRepository
+    TransactionalOutboxService ->> DomainService: ok
+    deactivate TransactionalOutboxService
+deactivate DomainService
+
+== Параллельный процесс Transactional Outbox ==
+par processEvents()
+    TransactionalOutboxTask -> TransactionalOutboxService: findAll()
+    activate TransactionalOutboxService
+    TransactionalOutboxService ->> TransactionalOutboxRepository: findAll()
+    TransactionalOutboxRepository ->> TransactionalOutboxService: необработанные события
+    TransactionalOutboxService ->> TransactionalOutboxTask: необработанные события
+    deactivate TransactionalOutboxService
+
+    loop для каждого необработанного события
+           TransactionalOutboxTask --> topicKafka: отправить событие во внутренний топик
+           topicKafka --> TransactionalOutboxTask: CompletableFuture<SendResult<K, V>>
+           opt если событие успешно отправлено в топик (whenComplete((result, ex) -> {process callback}})
+                TransactionalOutboxTask ->> db: удалить событие из OUTBOX таблицы
+                db ->> TransactionalOutboxTask: ok
+           end
+    end
+end
+
+@enduml

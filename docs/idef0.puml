@@ -1,0 +1,17 @@
+@startuml
+!pragma layout smetana
+
+rectangle "A0 Обработать заказ" as A0
+
+left to right direction
+
+rectangle "Заказ" as Input
+rectangle "Политики" as Control
+rectangle "Оператор" as Mechanism
+rectangle "Обработанный\nзаказ" as Output
+
+Input --> A0
+Control -[#blue]-> A0
+Mechanism -[#green]-> A0
+A0 --> Output
+@enduml
